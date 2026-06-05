@@ -22,6 +22,7 @@
    [app.common.types.shape :as cts]
    [app.common.types.shape.layout :as ctl]
    [app.common.types.tokens-lib :as ctob]
+   [app.common.types.tokens-status :as ctos]
    [app.common.uuid :as uuid]
    [clojure.datafy :refer [datafy]]))
 
@@ -1018,6 +1019,18 @@
         (update :undo-changes conj {:type :set-token-theme
                                     :id id
                                     :attrs (datafy prev-theme)})
+        (apply-changes-local))))
+
+(defn set-tokens-status
+  [changes theme-ids set-ids]
+  (assert-library! changes)
+  (let [library-data (::library-data (meta changes))
+        tokens-status (ctf/get-tokens-status library-data nil)
+        prev-theme-ids  (ctos/get-active-theme-ids tokens-status)
+        prev-set-ids  (ctos/get-active-set-ids tokens-status)]
+    (-> changes
+        (update :redo-changes conj {:type :set-tokens-status :theme-ids theme-ids :set-ids set-ids})
+        (update :undo-changes conj {:type :set-tokens-status :theme-ids prev-theme-ids :set-ids prev-set-ids})
         (apply-changes-local))))
 
 (defn set-active-token-themes

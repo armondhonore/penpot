@@ -11,6 +11,7 @@
    [app.common.features :as cfeat]
    [app.common.files.defaults :refer [version]]
    [app.common.files.helpers :as cfh]
+   [app.common.files.tokens :as cfo]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.geom.shapes.tree-seq :as gsts]
@@ -29,6 +30,7 @@
    [app.common.types.shape-tree :as ctst]
    [app.common.types.text :as txt]
    [app.common.types.tokens-lib :as ctob]
+   [app.common.types.tokens-status :as ctos]
    [app.common.types.typographies-list :as ctyl]
    [app.common.types.typography :as cty]
    [app.common.uuid :as uuid]
@@ -86,7 +88,8 @@
    [:components {:optional true} schema:components]
    [:typographies {:optional true} schema:typographies]
    [:plugin-data {:optional true} schema:plugin-data]
-   [:tokens-lib {:optional true} ctob/schema:tokens-lib]])
+   [:tokens-lib {:optional true} ctob/schema:tokens-lib]
+   [:tokens-status {:optional true} ctos/schema:tokens-status]])
 
 (def schema:file
   "A schema for validate a file data structure; data is optional
@@ -196,11 +199,6 @@
 
     (check-file file)))
 
-(defn ensure-tokens-lib
-  "Ensure file-data has a :tokens-lib key, creating one if necessary."
-  [file-data]
-  (update file-data :tokens-lib #(or % (ctob/make-tokens-lib))))
-
 ;; Helpers
 
 (defn file-data
@@ -309,6 +307,31 @@
      file-data
      (fn [container]
        (update-objects-tree container f)))))
+
+;; Tokens helpers
+(defn get-tokens-lib
+  [file-data]
+  (:tokens-lib file-data))
+
+(defn get-tokens-status
+  [file-data tokens-file-data]
+  (let [tokens-file-data (or tokens-file-data file-data)]
+    (if (and (some? (:tokens-lib tokens-file-data)) (nil? (:tokens-status file-data)))
+      ;; TODO: remove this when we deprecate old-style files without tokens-status
+      (cfo/make-tokens-status-from-lib (:tokens-lib tokens-file-data))
+      (:tokens-status file-data))))
+
+(defn update-tokens-lib
+  "Update the tokens-lib inside file-data through a callback function.
+   The function will receive the tokens lib and the rest of args."
+  [file-data f & args]
+  (d/update-when file-data :tokens-lib #(apply f % args)))
+
+(defn update-tokens-status
+  "Update the tokens-status inside file-data through a callback function.
+   The function will receive the tokens status and the rest of args."
+  [file-data f & args]
+  (d/update-when file-data :tokens-status #(apply f % args)))
 
 ;; Asset helpers
 (defn find-component-file

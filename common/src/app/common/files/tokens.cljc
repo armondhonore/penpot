@@ -12,6 +12,7 @@
    [app.common.schema :as sm]
    [app.common.types.token :as cto]
    [app.common.types.tokens-lib :as ctob]
+   [app.common.types.tokens-status :as ctos]
    [clojure.set :as set]
    [cuerdas.core :as str]
    [malli.core :as m]))
@@ -345,6 +346,8 @@
 ;; HELPERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; Token
+
 (def parseable-token-value-regexp
   "Regexp that can be used to parse a number value out of resolved token value.
   This regexp also trims whitespace around the value."
@@ -416,3 +419,38 @@
 ;; FIXME: this should be precalculated ?
 (defn is-reference? [token]
   (str/includes? (:value token) "{"))
+
+;; Tokens lib
+
+(defn make-tokens-status-from-lib
+  "Make a TokensStatus from a TokensLib, activating the themes and sets
+   marked as active in the library (to migrate from legacy files)."
+  [tokens-lib]
+  (assert (ctob/tokens-lib? tokens-lib) "expected valid tokens-lib")
+  (let [active-theme-ids (into #{}
+                               (comp (map :id)
+                                     (filter #(not= % ctob/hidden-theme-id)))
+                               (ctob/get-active-themes tokens-lib))
+        active-set-ids   (into #{}
+                               (comp (map #(ctob/get-set-by-name tokens-lib %))
+                                     (remove nil?)
+                                     (map ctob/get-id))
+                               (ctob/get-active-themes-set-names tokens-lib))]
+    (ctos/make-tokens-status :active-theme-ids active-theme-ids
+                             :active-set-ids active-set-ids)))
+
+(defn ensure-tokens-lib
+  "Ensure file-data has a :tokens-lib and a :tokens-status keys, creating them if necessary."
+  [file-data]
+  (if (and (some? (:tokens-lib file-data)) (nil? (:tokens-status file-data)))
+    ;; TODO: remove this when we deprecate old-style files without tokens-status
+    (assoc file-data :tokens-status (make-tokens-status-from-lib (:tokens-lib file-data)))
+    (-> file-data
+        (update :tokens-lib #(or % (ctob/make-tokens-lib)))
+        (update :tokens-status #(or % (ctos/make-tokens-status))))))
+
+(defn get-active-themes
+  "Return an ordered sequence of active themes"
+  [tokens-status tokens-lib]
+  (->> (ctob/get-themes tokens-lib)
+       (filter #(ctos/theme-active? tokens-status (ctob/get-id %)))))

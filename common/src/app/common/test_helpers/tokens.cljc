@@ -6,6 +6,7 @@
 
 (ns app.common.test-helpers.tokens
   (:require
+   [app.common.files.tokens :as cfo]
    [app.common.test-helpers.files :as thf]
    [app.common.test-helpers.shapes :as ths]
    [app.common.types.container :as ctn]
@@ -17,15 +18,31 @@
 
 (defn get-tokens-lib
   [file]
-  (:tokens-lib (ctf/file-data file)))
+  (-> file (ctf/file-data) (ctf/get-tokens-lib)))
+
+(defn get-tokens-status
+  [file]
+  (-> file (ctf/file-data) (ctf/get-tokens-status nil)))
 
 (defn add-tokens-lib
+  "Ensure the file has a tokens-lib and a tokens-status in its data, creating empty ones if not"
   [file]
-  (ctf/update-file-data file ctf/ensure-tokens-lib))
+  (ctf/update-file-data file cfo/ensure-tokens-lib))
 
 (defn update-tokens-lib
+  "Modify the tokens-lib of a file "
   [file f]
-  (ctf/update-file-data file #(update % :tokens-lib f)))
+  (ctf/update-file-data file #(ctf/update-tokens-lib % f)))
+
+(defn update-tokens-status
+  [file f]
+  (ctf/update-file-data file #(ctf/update-tokens-status % f)))
+
+(defn sample-file-with-tokens [tokens-lib-fn tokens-status-fn]
+  (-> (thf/sample-file :file1)
+      (add-tokens-lib)
+      (update-tokens-lib tokens-lib-fn)
+      (update-tokens-status tokens-status-fn)))
 
 (defn get-token
   [file set-id token-id]
