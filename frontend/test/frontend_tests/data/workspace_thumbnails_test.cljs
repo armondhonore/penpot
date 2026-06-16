@@ -154,7 +154,7 @@
         result (ptk/update event state)]
     ;; State unchanged when queue is already empty
     (t/is (empty? (get result deletion-queue-key)))
-    (t/is (= state (dissoc result deletion-queue-key)))))
+    (t/is (= {} (dissoc result deletion-queue-key)))))
 
 (t/deftest assoc-thumbnail-adds-to-map
   (let [object-id (thc/fmt-object-id (uuid/next) (uuid/next) (uuid/next) "frame")
