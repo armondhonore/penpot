@@ -4,6 +4,7 @@ import { AbstractPluginTask, PluginTask } from "./PluginTask";
 import { RemotePluginTask } from "./RemotePluginTask";
 import { PluginTaskRequest, PluginTaskResponse, PluginTaskResult } from "@penpot/mcp-common";
 import { createLogger } from "./logger";
+import { assertPluginResponsive } from "./PluginConnectionHealth";
 import type { PenpotMcpServer } from "./PenpotMcpServer";
 import type { RedisBridge } from "./RedisBridge";
 
@@ -13,6 +14,14 @@ interface ClientConnection {
     socket: WebSocket;
     userToken: string | null;
     pingInterval: NodeJS.Timeout;
+    /** timestamp (ms since epoch) of the last message received from the plugin over this connection. */
+    lastHeartbeat: number;
+    /**
+     * whether the plugin has reported (via a "freeze" message) that its tab is being frozen by
+     * the browser. Cleared as soon as any further message arrives, since that proves the page's
+     * event loop is running again.
+     */
+    frozen: boolean;
 }
 
 /**
@@ -79,7 +88,13 @@ export class PluginBridge {
             }, KEEP_ALIVE_TIME);
 
             // register the client connection with both indexes
-            const connection: ClientConnection = { socket: ws, userToken, pingInterval };
+            const connection: ClientConnection = {
+                socket: ws,
+                userToken,
+                pingInterval,
+                lastHeartbeat: Date.now(),
+                frozen: false,
+            };
             this.connectedClients.set(ws, connection);
             if (userToken) {
                 // ensure only one connection per userToken
@@ -107,8 +122,24 @@ export class PluginBridge {
             ws.on("message", (data: Buffer) => {
                 this.logger.debug("Received WebSocket message: %s", data.toString());
                 try {
-                    const response: PluginTaskResponse<any> = JSON.parse(data.toString());
-                    this.handlePluginTaskResponse(response);
+                    // any message received over the socket originates from the page's event loop,
+                    // so it confirms the tab is alive (not throttled/frozen/discarded)
+                    connection.lastHeartbeat = Date.now();
+
+                    const message = JSON.parse(data.toString());
+                    // the plugin reports, at freeze time, that its tab is going to sleep
+                    if (message?.type === "freeze") {
+                        connection.frozen = true;
+                        this.logger.info("Plugin tab reported it is being frozen by the browser");
+                        return;
+                    }
+                    // any other message proves the page's event loop is running, so it is not frozen
+                    connection.frozen = false;
+                    // heartbeats carry no task payload; they exist solely to refresh liveness
+                    if (message?.type === "heartbeat") {
+                        return;
+                    }
+                    this.handlePluginTaskResponse(message as PluginTaskResponse<any>);
                 } catch (error) {
                     this.logger.error(error, "Failure while processing WebSocket message");
                 }
@@ -292,6 +323,11 @@ export class PluginBridge {
                 // WebSocket is not open
                 throw new Error(`Plugin instance is disconnected. Task could not be sent.`);
             }
+
+            // Fail fast if the plugin's tab has been frozen or suspended by the browser: the
+            // socket may still look open (protocol pings are answered automatically) while the
+            // page's event loop is paused and cannot run the task.
+            assertPluginResponsive(target, Date.now());
 
             // register the task for result correlation, then send over the socket
             this.pendingTasks.set(task.id, task);
