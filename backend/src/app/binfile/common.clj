@@ -922,4 +922,4 @@
   "Return all shared files in `team-id` whose slugified name equals `slug`."
   [cfg team-id slug]
   (->> (get-shared-files-for-team cfg team-id)
-       (filterv #(= slug (slugify-name (:name %))))))
+       (filter #(= slug (slugify-name (:name %))))))

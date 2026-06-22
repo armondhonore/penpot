@@ -218,20 +218,18 @@
                                            :section (:section payload)
                                            :name (:name payload))
 
-                                  (= type "library-candidates")
-                                  (vreset! library-resolution* payload)
-
                                   :else
                                   (log/dbg :hint "import-binfile: end")))))
                     (rx/filter sse/end-of-stream?)
-                    (rx/mapcat (fn [_]
-                                 (let [resolution @library-resolution*]
-                                   (->> (rx/from entries)
-                                        (rx/map (fn [entry]
-                                                  (cond-> {:status :finish
-                                                           :file-id (:file-id entry)}
-                                                    (some? resolution)
-                                                    (assoc :library-resolution resolution))))))))
+                    (rx/mapcat (fn [message]
+                                 (let [{:keys [file-ids resolution]} (sse/get-payload message)]
+                                   (rx/concat
+                                    (->> (rx/from entries)
+                                         (rx/map (fn [entry]
+                                                   {:status :finish
+                                                    :file-id (:file-id entry)})))
+                                    (rx/of {:status :libraries-resolution
+                                            :data resolution})))))
                     (rx/catch
                      (fn [cause]
                        (log/error :hint "import-binfile: unexpected error on importing"

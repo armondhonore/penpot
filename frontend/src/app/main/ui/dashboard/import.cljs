@@ -188,9 +188,11 @@
          (rx/filter (comp uuid? :file-id))
          (rx/subs!
           (fn [message]
+            (prn "AAA" message)
             ;; Capture library-resolution data if present (same for all
             ;; entries from the same zip, so first one wins)
-            (when-let [resolution (:library-resolution message)]
+            (when-let [resolution  (-> (:libraries-resolution message)
+                                       (not-empty))]
               (when (nil? @library-resolution*)
                 (reset! library-resolution* resolution)))
             (swap! state update-entry-status message))))))
@@ -198,14 +200,14 @@
 (mf/defc import-entry*
   {::mf/memo true
    ::mf/private true}
-  [{:keys [entries entry edition can-be-deleted importing? on-edit on-change on-delete]}]
+  [{:keys [entries entry edition can-be-deleted is-progress on-edit on-change on-delete]}]
   (let [status          (:status entry)
         ;; FIXME: rename to format
         format          (:type entry)
 
         loading?        (or (= :analyze status)
                             (= :import-progress status)
-                            (and importing? (= :import-ready status)))
+                            (and is-progress (= :import-ready status)))
         analyze-error?  (= :analyze-error status)
         import-success? (= :import-success status)
         import-error?   (= :import-error status)
@@ -623,6 +625,7 @@
 
                      :else
                      (tr "dashboard.import.import-error.unknown-error"))])]))]
+
           [:div (tr "dashboard.import.import-error.message2")]]
 
          (when-not (= :library-resolution status)
@@ -631,7 +634,7 @@
                                 :key (dm/str (:uri entry) "/" (:file-id entry))
                                 :entry entry
                                 :entries entries
-                                :importing? (= :import-progress status)
+                                :is-progress (= :import-progress status)
                                 :on-edit on-edit
                                 :on-change on-entry-change
                                 :on-delete on-entry-delete

@@ -380,6 +380,9 @@
 
 (defn- export-files
   [{:keys [::bfc/ids ::bfc/include-libraries ::output] :as cfg}]
+
+  (prn "=====" "export-files" include-libraries ids)
+
   (let [original-ids ids
         ids  (into ids (when include-libraries (bfc/get-libraries cfg ids)))
         rels (if include-libraries
@@ -912,51 +915,58 @@
 
           (vswap! bfc/*state* update :index assoc id (:id sobject)))))))
 
-(defn- resolve-external-libraries
+(defn- resolve-external-libraries-references
   "For each external library in the manifest, look for matching shared
   files in the team by slugified name. Returns a map of
   old-lib-id -> [{:id uuid :name string}] for libraries with matches."
   [{:keys [::manifest ::bfc/team-id] :as cfg}]
-  (let [external-libs (:external-libraries manifest)]
-    (when (and team-id (seq external-libs))
-      (reduce (fn [result {:keys [id slug]}]
-                (let [candidates (bfc/find-shared-files-by-slug cfg team-id slug)]
-                  (if (seq candidates)
-                    (assoc result id candidates)
-                    result)))
-              {}
-              external-libs))))
+  (assert (uuid? team-id) "team-id should be provided")
+  (reduce (fn [result {:keys [id slug] :as lib}]
+            (if-let [candidates (-> (bfc/find-shared-files-by-slug cfg team-id slug)
+                                    (vec)
+                                    (not-empty))]
+              (assoc result id (assoc lib :candidates candidates))
+              result))
+          {}
+          (:external-libraries manifest)))
 
 (defn- auto-link-libraries
   "Auto-link imported files to libraries that have exactly one candidate
-  match. Returns a vector of {:id old-lib-id :name string :new-id uuid}
+  match. Returns a vector of {:id old-lib-id :name string :linked-to uuid}
   for each auto-linked library."
   [{:keys [::db/conn ::manifest ::bfc/timestamp ::bfc/profile-id] :as cfg} resolution file-ids]
-  (let [external-libs (:external-libraries manifest)]
-    (reduce (fn [linked {:keys [id name used-by] :as ext-lib}]
-              (let [candidates (get resolution id)]
-                (if (= 1 (count candidates))
-                  (let [new-lib-id (:id (first candidates))
-                        perms      (bfc/get-file-permissions conn profile-id new-lib-id)]
-                    ;; Only auto-link when the importer has edit permission
-                    ;; on the matched library, matching the manual link RPC.
-                    (if (:can-edit perms)
-                      (let [;; Link only files that actually used this library
-                            relevant-file-ids (if (seq used-by)
-                                                (let [used-set (set (map bfc/lookup-index used-by))]
-                                                  (filterv used-set file-ids))
-                                                file-ids)]
-                        (doseq [fid relevant-file-ids]
-                          (let [rel-params {:file-id fid
-                                            :library-file-id new-lib-id}]
-                            (db/insert! conn :file-library-rel rel-params
-                                        ::db/on-conflict-do-nothing? true)
-                            (bfc/upsert-file-library-sync! conn (assoc rel-params :synced-at timestamp))))
-                        (conj linked {:id id :name name :new-id new-lib-id}))
-                      linked))
-                  linked)))
-            []
-            external-libs)))
+  (reduce-kv (fn [result id {:keys [name used-by candidates]}]
+               (if (= 1 (count candidates))
+                 (let [candidate (first candidates)
+                       lib-id    (get candidate :id)
+                       perms     (bfc/get-file-permissions conn profile-id lib-id)]
+
+                   ;; Only auto-link when the importer has edit permission
+                   ;; on the matched library, matching the manual link RPC.
+                   (if (:can-edit perms)
+                     ;; Link only files that actually used this library
+                     (let [used-by  (into #{} (map bfc/lookup-index) used-by)
+                           file-ids (-> (filter #(contains? used-by %) file-ids)
+                                        (not-empty))]
+
+                       (doseq [file-id file-ids]
+                         (when (contains? used-by file-id)
+                           (let [rel-params {:file-id file-id
+                                             :library-file-id lib-id}]
+                             (db/insert! conn :file-library-rel rel-params
+                                         {::db/on-conflict-do-nothing? true})
+                             (bfc/upsert-file-library-sync! conn (assoc rel-params :synced-at timestamp)))))
+
+                       (if file-ids
+                         (update result id (fn [lib]
+                                             (-> lib
+                                                 (assoc :linked-to lib-id)
+                                                 (dissoc :candidates))))
+                         (dissoc result id)))
+                     result))
+                 result))
+             resolution
+             resolution))
 
 (defn- import-files*
   [{:keys [::manifest] :as cfg}]
@@ -966,40 +976,28 @@
 
   (import-storage-objects cfg)
 
-  (let [files  (get manifest :files)
-        result (reduce (fn [result file]
-                         (let [name' (get file :name)
-                               file (assoc file :name name')]
-                           (conj result (import-file cfg file))))
-                       []
-                       files)]
+  (let [files    (get manifest :files)
+        file-ids (reduce (fn [result file]
+                           (let [name' (get file :name)
+                                 file (assoc file :name name')]
+                             (conj result (import-file cfg file))))
+                         []
+                         files)]
 
     (import-file-relations cfg)
 
     ;; Resolve external libraries by slug and auto-link single matches
-    (let [resolution  (resolve-external-libraries cfg)
-          auto-linked (when (seq resolution)
-                        (auto-link-libraries cfg resolution result))
+    (let [resolution
+          (resolve-external-libraries-references cfg)
 
-          ;; Collect multi-match candidates for frontend resolution
-          candidates  (when (seq resolution)
-                        (into {}
-                              (filter (fn [[_ candidates]] (> (count candidates) 1)))
-                              resolution))
+          resolution
+          (auto-link-libraries cfg resolution file-ids)]
 
-          ;; Build external-libraries lookup from manifest for the frontend
-          external-libs-info (when (seq resolution)
-                               (->> (:external-libraries manifest)
-                                    (filter #(contains? candidates (:id %)))
-                                    (mapv (fn [{:keys [id name slug]}]
-                                            {:id id :name name :slug slug}))))]
+      (app.common.pprint/pprint resolution)
 
       (bfm/apply-pending-migrations! cfg)
-
-      {:file-ids           result
-       :auto-linked        (or auto-linked [])
-       :library-candidates (or candidates {})
-       :external-libs      (or external-libs-info [])})))
+      {:file-ids   file-ids
+       :resolution resolution})))
 
 (defn- import-file-and-overwrite*
   [{:keys [::manifest ::bfc/file-id] :as cfg}]
@@ -1027,10 +1025,8 @@
       (bfc/invalidate-thumbnails cfg file-id)
       (bfm/apply-pending-migrations! cfg)
 
-      {:file-ids           [file-id]
-       :auto-linked        []
-       :library-candidates {}
-       :external-libs      []})))
+      {:file-ids   [file-id]
+       :resolution {}})))
 
 (defn- import-files
   [{:keys [::bfc/timestamp ::bfc/input] :or {timestamp (ct/now)} :as cfg}]
@@ -1068,20 +1064,9 @@
     (events/tap :progress {:section :manifest})
 
     (binding [bfc/*state* (volatile! {:media [] :index {}})]
-      (let [result (if (::bfc/file-id cfg)
-                     (db/tx-run! cfg import-file-and-overwrite*)
-                     (db/tx-run! cfg import-files*))]
-
-        ;; Emit library-candidates event for frontend resolution of
-        ;; multi-match cases (if any)
-        (when (seq (:library-candidates result))
-          (events/tap :library-candidates
-                      {:file-ids           (:file-ids result)
-                       :auto-linked        (:auto-linked result)
-                       :library-candidates (:library-candidates result)
-                       :external-libs      (:external-libs result)}))
-
-        result))))
+      (if (::bfc/file-id cfg)
+        (db/tx-run! cfg import-file-and-overwrite*)
+        (db/tx-run! cfg import-files*)))))
 
 ;; --- PUBLIC API
 
@@ -1110,6 +1095,8 @@
         tp (ct/tpoint)
         ab (volatile! false)
         cs (volatile! nil)]
+
+    (prn "AAAAAAAAAAAA")
     (try
       (l/info :hint "start exportation" :export-id (str id))
       (binding [bfc/*state* (volatile! (bfc/initial-state))]
