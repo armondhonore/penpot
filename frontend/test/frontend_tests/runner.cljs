@@ -250,8 +250,8 @@
 
       :else
       (do
-        (when-let [level (:log-level options)]
-          (l/setup! {:app level}))
+        (l/setup! {:app (or (:log-level options) :warn)})
+
         (if (:focus options)
           (run-focused-test! (:focus options))
           (run-test-vars! (map #(selected-tests {:ns %}) test-namespaces)))))))
