@@ -7,9 +7,13 @@
 (ns app.common.logic.tokens
   (:require
    [app.common.files.changes-builder :as pcb]
+   [app.common.logging :as log]
    [app.common.types.tokens-lib :as ctob]
    [app.common.types.tokens-status :as ctos]
    [clojure.set :as set]))
+
+;; Change this to :info :debug or :trace to debug this module, or :warn to reset to default
+(log/set-level! :info)
 
 (defn- generate-update-active-sets
   "Copy the active sets from the currently active themes and move them
@@ -216,3 +220,26 @@
               (pcb/set-token-set changes (ctob/get-id set) nil))
             changes
             sets)))
+
+(defn generate-sync-tokens-status-with-lib
+  "Synchronizes tokens status with the current tokens lib:
+   - Delete any theme or set that no longer exists in the lib."
+  [changes tokens-status tokens-lib]
+  (let [active-theme-ids (ctos/get-active-theme-ids tokens-status)
+        valid-theme-ids  (into #{}
+                               (filter #(some? (ctob/get-theme tokens-lib %)))
+                               active-theme-ids)
+        active-set-ids   (ctos/get-active-set-ids tokens-status)
+        valid-set-ids    (into #{}
+                               (filter #(some? (ctob/get-set tokens-lib %)))
+                               active-set-ids)]
+
+    (if (or (not= active-theme-ids valid-theme-ids)
+            (not= active-set-ids valid-set-ids))
+      (do
+        (log/info :hint "syncing token status"
+                  :removed-themes (count (set/difference active-theme-ids valid-theme-ids))
+                  :removed-sets (count (set/difference active-set-ids valid-set-ids)))
+        (-> changes
+            (pcb/set-tokens-status valid-theme-ids valid-set-ids)))
+      changes)))

@@ -1258,3 +1258,22 @@
 (defmethod frames-changed :default
   [_ _]
   nil)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Design Tokens changes detection
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def ^:private tokens-lib-change-types
+  "Set of change types that modify the tokens library."
+  #{:set-tokens-lib
+    :set-token
+    :set-token-set
+    :set-token-theme
+    :rename-token-set-group
+    :move-token-set
+    :move-token-set-group})
+
+(defn tokens-lib-changed?
+  "Check if a commit contains changes that modify the tokens library."
+  [changes]
+  (some #(tokens-lib-change-types (:type %)) changes))

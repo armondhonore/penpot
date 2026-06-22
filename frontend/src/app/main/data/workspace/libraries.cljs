@@ -16,6 +16,7 @@
    [app.common.logging :as log]
    [app.common.logic.libraries :as cll]
    [app.common.logic.shapes :as cls]
+   [app.common.logic.tokens :as clo]
    [app.common.logic.variants :as clv]
    [app.common.path-names :as cpn]
    [app.common.time :as ct]
@@ -58,6 +59,7 @@
    [app.util.color :as uc]
    [app.util.i18n :refer [tr]]
    [beicon.v2.core :as rx]
+   [clojure.set :as set]
    [cuerdas.core :as str]
    [potok.v2.core :as ptk]))
 
@@ -1481,6 +1483,50 @@
                      (rx/map render-component-thumbnail-event)))
 
                (rx/take-until stopper-s)))))))
+
+  #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+(defn sync-token-status-with-lib
+  "Synchronize the tokens-status in the current file with the current tokens library.
+   Removes from active themes and sets any that no longer exist in the library."
+  []
+  (ptk/reify ::sync-token-status-with-lib
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [tokens-lib    (dsh/lookup-tokens-lib state)
+            tokens-status (dsh/lookup-tokens-status state)]
+        (when (and tokens-lib tokens-status)
+          (let [data    (dsh/lookup-file-data state)
+                changes (-> (pcb/empty-changes)
+                            (pcb/with-library-data data)
+                            (clo/generate-sync-tokens-status-with-lib tokens-status tokens-lib))]
+            (rx/of (dch/commit-changes changes))))))))
+
+  #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+(defn watch-token-changes
+  "Watch the state for changes that affect the tokens library. If a change is detected,
+   launches a sync-token-status event so the tokens-status is kept in sync with the library."
+  []
+  (ptk/reify ::watch-token-changes
+    ptk/WatchEvent
+    (watch [_ _ stream]
+      (let [stopper-s
+            (->> stream
+                 (rx/map ptk/type)
+                 (rx/filter (fn [event-type]
+                              (or (= ::dwpg/finalize-page event-type)
+                                  (= ::watch-token-changes event-type)))))
+
+            changes-s
+            (->> stream
+                 (rx/filter dch/commit?)
+                 (rx/map deref)
+                 (rx/filter #(= :local (:source %)))
+                 (rx/observe-on :async))]
+
+        (->> changes-s
+             (rx/filter (comp ch/tokens-lib-changed? :changes))
+             (rx/map (fn [_] (sync-token-status-with-lib)))
+             (rx/take-until stopper-s))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Backend interactions
