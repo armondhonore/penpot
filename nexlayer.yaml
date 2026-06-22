@@ -1,0 +1,48 @@
+application:
+  name: penpot
+  pods:
+  - name: frontend
+    image: penpotapp/frontend:latest
+    path: /
+    servicePorts:
+    - 80
+    vars:
+      PENPOT_FLAGS: "enable-registration enable-login-with-password"
+  - name: backend
+    image: penpotapp/backend:latest
+    path: /api
+    servicePorts:
+    - 6060
+    vars:
+      PENPOT_FLAGS: "enable-registration enable-login-with-password"
+      PENPOT_SECRET_KEY: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+      PENPOT_DATABASE_URI: "postgresql://penpot:penpot@postgres.pod/penpot"
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: penpot
+      PENPOT_REDIS_URI: "redis://redis.pod/0"
+      PENPOT_PUBLIC_URI: "https://relaxed-weasel-penpot.cloud.nexlayer.ai"
+      PENPOT_STORAGE_ASSETS_FS_DIRECTORY: /opt/data/assets
+    volumes:
+    - name: penpot-assets
+      mountPath: /opt/data/assets
+      size: 10Gi
+  - name: postgres
+    image: postgres:16-alpine
+    servicePorts:
+    - 5432
+    vars:
+      POSTGRES_DB: penpot
+      POSTGRES_USER: penpot
+      POSTGRES_PASSWORD: penpot
+    volumes:
+    - name: penpot-db
+      mountPath: /var/lib/postgresql/data
+      size: 5Gi
+  - name: redis
+    image: redis:7-alpine
+    servicePorts:
+    - 6379
+    volumes:
+    - name: penpot-redis
+      mountPath: /data
+      size: 2Gi
