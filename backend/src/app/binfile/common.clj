@@ -27,6 +27,7 @@
    [app.features.file-migrations :as fmigr]
    [app.loggers.audit :as-alias audit]
    [app.loggers.webhooks :as-alias webhooks]
+   [app.nitrate :as nitrate]
    [app.storage :as sto]
    [app.util.blob :as blob]
    [app.util.pointer-map :as pmap]
@@ -372,19 +373,39 @@
                     file-id profile-id
                     file-id profile-id])))
 
+(def ^:private sql:file-team-id
+  "select p.team_id
+     from file as f
+    inner join project as p on (p.id = f.project_id)
+    where f.id = ?")
+
+(defn- file-org-owner-viewer-permissions
+  "Viewer-equivalent permissions for a non-member org owner of the team
+  that owns `file-id`, or nil when not applicable."
+  [conn profile-id file-id]
+  (when-let [team-id (:team-id (db/exec-one! conn [sql:file-team-id file-id]))]
+    (when (nitrate/org-owner-of-team? conn profile-id team-id)
+      {:type :membership
+       :is-owner false
+       :is-admin false
+       :can-edit false
+       :can-read true
+       :is-logged (some? profile-id)})))
+
 (defn get-file-permissions
   ([conn profile-id file-id]
    (let [rows     (get-file-permissions* conn profile-id file-id)
          is-owner (boolean (some :is-owner rows))
          is-admin (boolean (some :is-admin rows))
          can-edit (boolean (some :can-edit rows))]
-     (when (seq rows)
+     (if (seq rows)
        {:type :membership
         :is-owner is-owner
         :is-admin (or is-owner is-admin)
         :can-edit (or is-owner is-admin can-edit)
         :can-read true
-        :is-logged (some? profile-id)})))
+        :is-logged (some? profile-id)}
+       (file-org-owner-viewer-permissions conn profile-id file-id))))
 
   ([conn profile-id file-id share-id]
    (let [perms  (get-file-permissions conn profile-id file-id)

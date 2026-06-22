@@ -54,10 +54,19 @@
         is-owner (boolean (some :is-owner rows))
         is-admin (boolean (some :is-admin rows))
         can-edit (boolean (some :can-edit rows))]
-    (when (seq rows)
+    (cond
+      (seq rows)
       {:is-owner is-owner
        :is-admin (or is-owner is-admin)
        :can-edit (or is-owner is-admin can-edit)
+       :can-read true}
+
+      ;; Non-member org owners get viewer-equivalent access to the teams
+      ;; of their organizations.
+      (nitrate/org-owner-of-team? conn profile-id team-id)
+      {:is-owner false
+       :is-admin false
+       :can-edit false
        :can-read true})))
 
 (def has-admin-permissions?
@@ -238,11 +247,42 @@
   {::doc/added "1.17"
    ::rpc/id-type :team
    ::sm/params schema:get-team}
-  [{:keys [::db/pool]} {:keys [::rpc/profile-id id file-id]}]
-  (get-team pool :profile-id profile-id :team-id id :file-id file-id))
+  [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id id file-id]}]
+  (get-team pool :profile-id profile-id :team-id id :file-id file-id :cfg cfg))
+
+(def ^:private sql:team-id-for-project
+  "SELECT team_id FROM project WHERE id = ?")
+
+(def ^:private sql:team-id-for-file
+  "SELECT p.team_id
+     FROM file AS f
+     JOIN project AS p ON (p.id = f.project_id)
+    WHERE f.id = ?")
+
+(defn- resolve-team-id
+  [conn {:keys [team-id project-id file-id]}]
+  (cond
+    (some? team-id)    team-id
+    (some? project-id) (:team-id (db/exec-one! conn [sql:team-id-for-project project-id]))
+    (some? file-id)    (:team-id (db/exec-one! conn [sql:team-id-for-file file-id]))))
+
+(defn- get-org-owner-viewer-team
+  "When `profile-id` is a non-member owner of the organization that owns
+  the requested team, returns the team shaped with viewer permissions;
+  otherwise nil. `cfg` must carry the nitrate client."
+  [conn cfg profile-id default-team-id params]
+  (when-let [team-id (and cfg (resolve-team-id conn params))]
+    (when (nitrate/org-owner-of-team? cfg profile-id team-id)
+      (some-> (db/get* conn :team {:id team-id})
+              (decode-row)
+              (assoc :is-default (= team-id default-team-id)
+                     :is-owner false
+                     :is-admin false
+                     :can-edit false)
+              (process-permissions)))))
 
 (defn get-team
-  [conn & {:keys [profile-id team-id project-id file-id] :as params}]
+  [conn & {:keys [profile-id team-id project-id file-id cfg] :as params}]
 
   (assert (uuid? profile-id) "profile-id is mandatory")
   (assert (or (db/connection? conn)
@@ -282,12 +322,13 @@
           :else
           (throw (IllegalArgumentException. "invalid arguments")))]
 
-    (when-not result
-      (ex/raise :type :not-found
-                :code :team-does-not-exist))
-    (-> result
-        (decode-row)
-        (process-permissions))))
+    (if result
+      (-> result
+          (decode-row)
+          (process-permissions))
+      (or (get-org-owner-viewer-team conn cfg profile-id default-team-id params)
+          (ex/raise :type :not-found
+                    :code :team-does-not-exist)))))
 
 ;; --- Query: Team Members
 
@@ -316,7 +357,7 @@
    ::sm/params schema:get-team-memebrs}
   [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id team-id]}]
   (dm/with-open [conn (db/open pool)]
-    (check-read-permissions! conn profile-id team-id)
+    (check-read-permissions! cfg profile-id team-id)
     (get-team-members conn team-id)))
 
 ;; --- Query: Team Users
@@ -342,10 +383,10 @@
   (dm/with-open [conn (db/open pool)]
     (if team-id
       (do
-        (check-read-permissions! conn profile-id team-id)
+        (check-read-permissions! cfg profile-id team-id)
         (get-users conn team-id))
       (let [{team-id :id} (get-team-for-file conn file-id)]
-        (check-read-permissions! conn profile-id team-id)
+        (check-read-permissions! cfg profile-id team-id)
         (get-users conn team-id)))))
 
 ;; This is a similar query to team members but can contain more data
@@ -432,7 +473,7 @@
    ::sm/params schema:get-team-stats}
   [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id team-id]}]
   (dm/with-open [conn (db/open pool)]
-    (check-read-permissions! conn profile-id team-id)
+    (check-read-permissions! cfg profile-id team-id)
     (get-team-stats conn team-id)))
 
 (def sql:team-stats
@@ -468,7 +509,7 @@
    ::sm/params schema:get-team-invitations}
   [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id team-id]}]
   (dm/with-open [conn (db/open pool)]
-    (check-read-permissions! conn profile-id team-id)
+    (check-read-permissions! cfg profile-id team-id)
     (get-team-invitations conn team-id)))
 
 

@@ -71,14 +71,14 @@
     (cond
       (uuid? team-id)
       (do
-        (teams/check-read-permissions! conn profile-id team-id)
+        (teams/check-read-permissions! cfg profile-id team-id)
         (db/query conn :team-font-variant
                   {:team-id team-id
                    :deleted-at nil}))
 
       (uuid? project-id)
       (let [project (db/get-by-id conn :project project-id {:columns [:id :team-id]})]
-        (projects/check-read-permissions! conn profile-id project-id)
+        (projects/check-read-permissions! cfg profile-id project-id)
         (db/query conn :team-font-variant
                   {:team-id (:team-id project)
                    :deleted-at nil}))
@@ -86,7 +86,7 @@
       (uuid? file-id)
       (let [file    (db/get-by-id conn :file file-id {:columns [:id :project-id]})
             project (db/get-by-id conn :project (:project-id file) {:columns [:id :team-id]})
-            perms   (bfc/get-file-permissions conn profile-id file-id share-id)]
+            perms   (bfc/get-file-permissions cfg profile-id file-id share-id)]
         (files/check-read-permissions! perms)
         (db/query conn :team-font-variant
                   {:team-id (:team-id project)
@@ -400,7 +400,7 @@
    ::sm/params schema:download-font}
   [{:keys [::sto/storage ::db/pool] :as cfg} {:keys [::rpc/profile-id id]}]
   (let [variant (db/get pool :team-font-variant {:id id})]
-    (teams/check-read-permissions! pool profile-id (:team-id variant))
+    (teams/check-read-permissions! cfg profile-id (:team-id variant))
 
     ;; Try to get the best available font format (prefer TTF for broader compatibility).
     (let [media-id (or (:ttf-file-id variant)
@@ -432,7 +432,7 @@
       (ex/raise :type :not-found
                 :code :object-not-found))
 
-    (teams/check-read-permissions! pool profile-id (:team-id (first variants)))
+    (teams/check-read-permissions! cfg profile-id (:team-id (first variants)))
 
     (let [tempfile (tmp/tempfile :suffix ".zip")
           ffamily  (-> variants first :font-family)]

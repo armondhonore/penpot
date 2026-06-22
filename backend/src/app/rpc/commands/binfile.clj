@@ -75,7 +75,7 @@
    ::webhooks/event? true
    ::sm/params schema:export-binfile}
   [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id file-id] :as params}]
-  (files/check-read-permissions! pool profile-id file-id)
+  (files/check-read-permissions! cfg profile-id file-id)
   (sse/response (partial export-binfile cfg params)))
 
 ;; --- Command: import-binfile

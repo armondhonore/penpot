@@ -33,8 +33,8 @@
   {::doc/added "1.20"
    ::sm/params schema:get-file-snapshots}
   [cfg {:keys [::rpc/profile-id file-id] :as params}]
-  (db/run! cfg (fn [{:keys [::db/conn]}]
-                 (files/check-read-permissions! conn profile-id file-id)
+  (db/run! cfg (fn [{:keys [::db/conn] :as cfg}]
+                 (files/check-read-permissions! cfg profile-id file-id)
                  (fsnap/get-visible-snapshots conn file-id))))
 
 ;; --- COMMAND QUERY: get-file-snapshot

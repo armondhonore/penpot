@@ -18,6 +18,7 @@
    [app.config :as cf]
    [app.http.client :as http]
    [app.http.session :as session]
+   [app.util.cache :as cache]
    [app.rpc :as-alias rpc]
    [app.setup :as-alias setup]
    [clojure.core :as c]
@@ -497,6 +498,40 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; UTILS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defonce ^:private team-org-owner-cache
+  ;; Short TTL: permission checks run on the read path, so we avoid an
+  ;; HTTP call to nitrate per check. The org owner of a team rarely
+  ;; changes, and stale entries only grant read access for a few seconds.
+  (cache/create :expire "30s" :max-size 2048))
+
+(defn- nitrate-client?
+  "True when `cfg` is a config map carrying the nitrate client (i.e. not
+  a raw db connection/pool passed by an internal caller)."
+  [cfg]
+  (and (map? cfg) (some? (get cfg ::client))))
+
+(defn- get-team-org-owner-id
+  "Returns the organization owner-id for `team-id`, or nil. Cached briefly."
+  [cfg team-id]
+  (cache/get team-org-owner-cache team-id
+             (fn [team-id]
+               (let [team-with-org (call cfg :get-team-org {:team-id team-id})]
+                 (get-in team-with-org [:organization :owner-id])))))
+
+(defn org-owner-of-team?
+  "True if `profile-id` is the owner of the organization that owns
+  `team-id`. Used to grant non-member org owners read-only access to the
+  teams of their organizations. `cfg` must be a config map with the
+  nitrate client; raw db connections/pools yield false so internal
+  callers are unaffected. Returns false when the :nitrate flag is off."
+  [cfg profile-id team-id]
+  (boolean
+   (when (and (contains? cf/flags :nitrate)
+              (nitrate-client? cfg)
+              (some? team-id)
+              (some? profile-id))
+     (= profile-id (get-team-org-owner-id cfg team-id)))))
 
 (defn sso-session-authorized?
   "Fetches the org-SSO config for the given team and checks whether

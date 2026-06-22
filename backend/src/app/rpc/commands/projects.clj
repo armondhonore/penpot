@@ -15,6 +15,7 @@
    [app.features.logical-deletion :as ldel]
    [app.loggers.audit :as-alias audit]
    [app.loggers.webhooks :as webhooks]
+   [app.nitrate :as nitrate]
    [app.rpc :as-alias rpc]
    [app.rpc.commands.teams :as teams]
    [app.rpc.doc :as-alias doc]
@@ -50,10 +51,20 @@
         is-owner (boolean (some :is-owner rows))
         is-admin (boolean (some :is-admin rows))
         can-edit (boolean (some :can-edit rows))]
-    (when (seq rows)
+    (cond
+      (seq rows)
       {:is-owner is-owner
        :is-admin (or is-owner is-admin)
        :can-edit (or is-owner is-admin can-edit)
+       :can-read true}
+
+      ;; Non-member org owners get viewer-equivalent access to the
+      ;; projects of teams in their organizations.
+      (when-let [team-id (:team-id (db/get* conn :project {:id project-id}))]
+        (nitrate/org-owner-of-team? conn profile-id team-id))
+      {:is-owner false
+       :is-admin false
+       :can-edit false
        :can-read true})))
 
 (def has-edit-permissions?
@@ -159,10 +170,10 @@
   {::doc/added "1.18"
    ::rpc/id-type :project
    ::sm/params schema:get-project}
-  [{:keys [::db/pool]} {:keys [::rpc/profile-id id]}]
+  [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id id]}]
   (dm/with-open [conn (db/open pool)]
     (let [project (db/get-by-id conn :project id)]
-      (check-read-permissions! conn profile-id id)
+      (check-read-permissions! cfg profile-id id)
       project)))
 
 
@@ -230,8 +241,8 @@
    ::webhooks/batch-key (webhooks/key-fn ::rpc/profile-id :id)
    ::webhooks/event? true
    ::db/transaction true}
-  [{:keys [::db/conn]} {:keys [::rpc/profile-id id team-id is-pinned] :as params}]
-  (check-read-permissions! conn profile-id id)
+  [{:keys [::db/conn] :as cfg} {:keys [::rpc/profile-id id team-id is-pinned] :as params}]
+  (check-read-permissions! cfg profile-id id)
   (db/exec-one! conn [sql:update-project-pin team-id id profile-id is-pinned is-pinned])
   nil)
 
