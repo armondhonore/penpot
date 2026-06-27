@@ -27,8 +27,11 @@ application:
   # Inline credentials (postgresql://user:pass@host/db) break Penpot's JDBC
   # driver resolution -> "No suitable driver". Credentials go in the separate
   # PENPOT_DATABASE_USERNAME / PENPOT_DATABASE_PASSWORD vars.
-  # DNS uses the per-app service name (postgres.pod collides across apps in a
-  # shared namespace).
+  # DNS uses the platform-generated service name. The pod is named
+  # `penpot-postgres`; with app name `penpot` the platform prefixes it, so the
+  # actual Service is `penpot-penpot-postgres-service` (NOT
+  # `penpot-postgres-service`). Same for redis. Bare `postgres.pod` would
+  # collide across apps in a shared namespace, so we never use it.
   # ---------------------------------------------------------------------------
   - name: backend
     image: penpotapp/backend:latest
@@ -38,10 +41,10 @@ application:
     vars:
       PENPOT_FLAGS: "enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies"
       PENPOT_SECRET_KEY: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-      PENPOT_DATABASE_URI: "postgresql://penpot-postgres-service:5432/penpot"
+      PENPOT_DATABASE_URI: "postgresql://penpot-penpot-postgres-service:5432/penpot"
       PENPOT_DATABASE_USERNAME: penpot
       PENPOT_DATABASE_PASSWORD: "XsQW5OM7X1Z5UHqLIce70oPBx7_vH9ki"
-      PENPOT_REDIS_URI: "redis://penpot-redis-service:6379/0"
+      PENPOT_REDIS_URI: "redis://penpot-penpot-redis-service:6379/0"
       PENPOT_PUBLIC_URI: "https://relaxed-weasel-penpot.cloud.nexlayer.ai"
       PENPOT_OBJECTS_STORAGE_BACKEND: fs
       PENPOT_OBJECTS_STORAGE_FS_DIRECTORY: /opt/data/assets
@@ -62,7 +65,7 @@ application:
     - 6061
     vars:
       PENPOT_SECRET_KEY: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-      PENPOT_REDIS_URI: "redis://penpot-redis-service:6379/0"
+      PENPOT_REDIS_URI: "redis://penpot-penpot-redis-service:6379/0"
       PENPOT_PUBLIC_URI: "https://relaxed-weasel-penpot.cloud.nexlayer.ai"
 
   # ---------------------------------------------------------------------------
